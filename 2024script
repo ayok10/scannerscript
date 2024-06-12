@@ -1,0 +1,123 @@
+#!/bin/bash
+
+# Function to log messages
+log() {
+  echo "$1"
+  echo "$1" >> "/opt/scripts/scan_results.txt"
+}
+
+start_time="$(date +%s)"
+app_dirs="/opt/atlassian /opt/j2ee"
+hostname="$(hostname)"
+java_user="java"
+
+if [[ "$(head -n1 /etc/issue)" == *"CentOS"* || "$(head -n1 /etc/issue)" == *"\S"* ]]; then
+  java_user="tomcat"
+elif [[ "$(head -n1 /etc/issue)" == *"Ubuntu"* ]]; then
+  java_user="tomcat"
+fi
+
+# Clean up from the last run
+log "Step 1 of 9"
+log "Cleaning up from the last run"
+if [ ! -d "/opt/scripts/" ]; then
+  mkdir -p "/opt/scripts/"
+fi
+
+if [ -f "/opt/scripts/scan_results.txt" ]; then
+  rm -f "/opt/scripts/scan_results.txt"
+fi
+log "Clean up complete"
+log ""
+
+# Maldet scan
+log "Step 2 of 9"
+log "Scanning with maldet. This could take a while."
+maldet -u
+freshclam
+maldet -a /
+log "Maldet scan complete"
+log ""
+
+# Maldet results from the last scan
+log "Step 3 of 9"
+log "Getting Maldet results from the last scan and adding to /opt/scripts/scan_results.txt"
+log "During a routine scan of your server, $hostname, we detected one or more suspicious files indicating the presence of malware on your server. Most often these are a result of an out-of-date or unpatched application or plugin."
+log "Due to security concerns, we ask that your team address this issue as soon as possible. In the event that we don't hear back that you have addressed the problematic files within the next 24 hours, we must quarantine them."
+log "If we do quarantine the files, there is a possibility that the functionality of your applications will be affected."
+log "Please note that it is not sufficient to simply restore from a recent backup, as it is likely that the recent backup would have these files as well."
+log "" >> "/opt/scripts/scan_results.txt"
+
+maldethits="$(maldet -l | grep '\-\-report' | tail -n1 | awk '{print $NF}')"
+find /usr/local/maldetect/sess/ -name "session.hits.$maldethits" -exec cat {} \; | grep -Ev 'rfxn.ndb|rfxn.hdb|rfxn.yara|hex.dat|md5.dat|/home/bmesh_admin|.log|.cache|.bak' >> "/opt/scripts/scan_results.txt"
+log "Maldet Results Complete"
+log ""
+
+# Chkrootkit scan
+log "Step 4 of 9"
+log "Scanning with chkrootkit. This could take a while."
+/home/contegixadmin/chkrootkit-*/chkrootkit | tee -a /opt/scripts/scan_results.txt
+log "Chkrootkit scan complete"
+log ""
+
+# Rkhunter scan
+log "Step 5 of 9"
+log "Scanning with rkhunter. This could take a while."
+rkhunter --update
+rkhunter --checkall --report-warnings-only | tee -a /opt/scripts/scan_results.txt
+log "Rkhunter scan complete"
+log ""
+
+# Additional malware hunting and related checks
+
+log "Additionally, we found the following suspicious files that may not have been detected by our malware scanning software. Please note that this secondary list is likely to contain false-positives but should still be investigated:" >> "/opt/scripts/scan_results.txt"
+log ""
+
+# JAR files in application directories
+log "Step 6 of 9"
+log "Searching for JAR files within application directories."
+log "JAR files within application directories. These can be malicious and should be reviewed manually and removed if they are indeed non-legit files:" >> "/opt/scripts/scan_results.txt"
+log ""
+
+find $app_dirs -name "*.jar" -printf '%TY-%Tm-%Td %TT %p\n' | sort -r | grep -vi 'log' >> "/opt/scripts/scan_results.txt"
+log "JAR file scan complete"
+log ""
+
+# Binaries within application directories
+log "Step 7 of 9"
+log "Searching for Binary files within /dev/shm, /var/tmp, /var/lib/dav, /tmp, and $app_dirs. This can take a while, please be patient."
+log "Binary files found within /dev/shm/, /var/tmp, /var/lib/dav, /tmp, and $app_dirs. These can be malicious and should be reviewed manually and removed if they are indeed non-legit files:" >> "/opt/scripts/scan_results.txt"
+log ""
+
+find /dev/shm/ /var/tmp/ /var/lib/dav/ /tmp/ $app_dirs -type f -exec file -i '{}' \; | grep 'x-executable; charset=binary' | awk -F ':' '{print $1}' | while read -r file; do
+  find "$file" -printf '%TY-%Tm-%Td %TT %p\n' | sort -r
+done >> "/opt/scripts/scan_results.txt"
+log "Binary file scan complete"
+log ""
+
+# Files owned by the java user within specific directories
+log "Step 8 of 9"
+log "Scanning for files owned $java_user:$java_user within /tmp, /var/tmp, /var/www, and /dev/shm."
+log "Files owned $java_user:$java_user within /tmp, /var/tmp, /var/lib/dav, /var/www, and /dev/shm. These can be malicious and should be reviewed manually and removed if they are indeed non-legit files:" >> "/opt/scripts/scan_results.txt"
+log "A large number of files here could indicate the need for a recursive permissions reset on the application directories." >> "/opt/scripts/scan_results.txt"
+log ""
+
+find /tmp/ /var/tmp/ /dev/shm/ /var/lib/dav/ /var/www/ -type f -user "$java_user" -group "$java_user" -printf '%TY-%Tm-%Td %TT %p\n' | sort -r | grep -vi 'log$\|tmp$\|cache$\|backup' >> "/opt/scripts/scan_results.txt"
+log "File scan complete"
+log ""
+
+# Directories owned by the java user within specific directories
+log "Step 9 of 9"
+log "Scanning for directories owned $java_user:$java_user within /tmp, /var/tmp, /var/www, and /dev/shm."
+log "Directories owned $java_user:$java_user within /tmp, /var/tmp, /var/lib/dav, /var/www, and /dev/shm. These can be malicious and should be reviewed manually and removed if they are indeed non-legit directories." >> "/opt/scripts/scan_results.txt"
+log "A large number of directories here could indicate the need for a recursive permissions reset on the application directories." >> "/opt/scripts/scan_results.txt"
+log ""
+
+find /tmp/ /var/tmp/ /dev/shm/ /var/www/ -type d -user "$java_user" -group "$java_user" -printf '%TY-%Tm-%Td %TT %p\n' | sort -r >> "/opt/scripts/scan_results.txt"
+log "Directory scan complete"
+log ""
+
+finish_time="$(date +%s)"
+
+log "Time duration: $((finish_time - start_time)) secs."
+log "Time duration: $((finish_time - start_time)) secs." >> "/opt/scripts/scan_results.txt"
