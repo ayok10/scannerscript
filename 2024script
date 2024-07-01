@@ -56,7 +56,7 @@ log ""
 # Chkrootkit scan
 log "Step 4 of 9"
 log "Scanning with chkrootkit. This could take a while."
-/home/contegixadmin/chkrootkit-*/chkrootkit | tee -a /opt/scripts/scan_results.txt
+/home/contegixadmin/chkrootkit-*/chkrootkit | grep -v 'not infected\|not found\|not tested\|nothing found'  | tee -a /opt/scripts/scan_results.txt
 log "Chkrootkit scan complete"
 log ""
 
